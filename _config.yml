@@ -28,7 +28,7 @@ tagline: Notes for myself   # it will display as the sub-title
 description: Notes for myself                        # used by seo meta and the atom feed
 
 # fill in the protocol & hostname for your site, e.g., 'https://username.github.io'
-url: 'https://v3he.github.io/'
+url: 'https://v3he.io/'
 
 github:
   username: v3he             # change to your github username
@@ -40,7 +40,7 @@ social:
   # Change to your full name.
   # It will be displayed as the default author of the posts and the copyright owner in the Footer
   name: v3he
-  email: pieldezombie@hotmail.com             # change to your email address
+  email: pablo@v3he.io             # change to your email address
   links:
     # The first element serves as the copyright owner's link
     # - https://twitter.com/username      # change to your twitter homepage
@@ -55,7 +55,7 @@ google_site_verification:               # fill in to your verification string
 # The end of `jekyll-seo-tag` settings
 
 google_analytics:
-  id:                 # fill in your Google Analytics ID
+  id: G-NCC8CES62H                # fill in your Google Analytics ID
   # Google Analytics pageviews report settings
   pv:
     proxy_endpoint:   # fill in the Google Analytics superProxy endpoint of Google App Engine
