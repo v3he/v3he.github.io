@@ -4,6 +4,14 @@
   type: github
   icon: 'fab fa-github'
 -
+  type: email
+  icon: 'fas fa-envelope'
+  noblank: true
+-
+  type: linkedin
+  icon: 'fab fa-linkedin'
+  url:  'https://www.linkedin.com/in/pablo-chueca-taus/'
+-
   type: rss
   icon: 'fas fa-rss'
   noblank: true
