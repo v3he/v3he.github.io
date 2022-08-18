@@ -711,3 +711,15 @@ root@retired:/tmp# whoami
 root
 ```
 {: .nolineno }
+
+## Beyond root
+
+To give a little more context about the exploitation we have done on the activate_license binary, let's open it with [ghidra](https://ghidra-sre.org/) to see exactly what it does.
+
+![Activate License Main Function](activate-license-main-func.png)
+
+The first question is, why when the application crashes, doesn't the whole service go down? The answer to this is in `line 57`, every time a client connects, a new thread is created, so what it does is to crash the child thread, not the main one.
+
+![Activate License Activate Function](activate-license-activate-license-func.png)
+
+This is the function that is responsible for activating the license, the vulnerability is clear, it is a basic buffer overflow. In `line 12`, a buffer of `512 bytes` is declared, but in `line 22`, when we read the content of the license file, it copies in the buffer of `512 bytes` the total of bytes corresponding to the length of the file and here is where the overflow takes place.
