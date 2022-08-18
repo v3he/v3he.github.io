@@ -58,7 +58,7 @@ dev:x:1001:1001::/home/dev:/bin/bash
 ```
 {: .nolineno }
 
-Great! We have `LFI` so we can read files from the system, let's launch `feroxbuster` to see what other paths the web has.
+Great! We have `Local File Disclosure` vulnerability so we can read files from the system, let's launch `feroxbuster` to see what other paths the web has.
 
 > file extensions to be searched (`-x`)
 {: .prompt-info }
@@ -93,7 +93,7 @@ by Ben "epi" Risher 🤓                 ver: 2.7.0
 ```
 {: .nolineno }
 
-Ignoring image folders, we can see another page besides `default.html`, let's see what `beta.html` contains.
+Another result apart from the ones we know has been listed, let's see what `beta.html` contains.
 
 ![Beta Page](beta-page.png)
 
@@ -101,7 +101,7 @@ It looks like a file upload page, let's create a blank file and view the request
 
 ![Upload File Request](upload-file-request.png)
 
-We can see that it makes a POST request to `activate_license.php`, since we have our `LFI` let's see what this code is doing.
+We can see that it makes a POST request to `activate_license.php`, since we have our `LFD` let's see what this code is doing.
 
 ```php
 $ curl http://10.129.227.96/index.php?page=activate_license.php     
@@ -162,7 +162,7 @@ $ cat cmdline
 ```
 {: .nolineno }
 
-Perfect! we see that what is working on port `1337` is `/usr/bin/activate_license`, let's download it and take a look at it.
+Perfect! we see that `/usr/bin/activate_license` is running on port `1337`, let's download it and take a look at it.
 
 ```bash
 $ curl -s http://10.129.227.96/index.php?page=../../../../../usr/bin/activate_license -o activate_license
@@ -178,7 +178,7 @@ $ ./activate_license 1337
 ```
 {: .nolineno }
 
-The file is a 64-bit binary that we can use to replicate the server's file upload operation. The most common vulnerability is usually a buffer overflow, so let's launch the program in `GDB` to see what it is doing. As we saw in the code of `activate_license.php`, it first sends the length of the file and then sends the content of the file.
+The file is a 64-bit binary that we can use to replicate the server's file upload operation. The most common vulnerability is usually a buffer overflow, so let's launch the program in `gdb` to see what it is doing. As we saw in the code of `activate_license.php`, it first sends the length of the file and then sends the content of the file.
 
 ```bash
 $ gdb -q ./activate_license
@@ -243,12 +243,12 @@ $cs: 0x33 $ss: 0x2b $ds: 0x00 $es: 0x00 $fs: 0x00 $gs: 0x00
 ```
 {: .nolineno }
 
-We note that the program has crashed, and we have overwritten the stack with all `A`, which indicates that it is indeed vulnerable to buffer overflow.
+We note that the program has crashed, and we have overwritten `rsp` with all `A`, which indicates that it is indeed vulnerable to buffer overflow.
 
-The reason the `RIP` was not overflowed (technically it was, as we saw in the above screenshot, but there's more to it), is because the AAAAAAAA (0x4141414141414141) is considered a non-canonical memory address, or, in other words, 0x4141414141414141 is a 64-bit wide address and current CPUs prevent applications and OSes to use 64-bit wide addresses. 
+The reason the `rip` was not overflowed (technically it was, as we saw in the above screenshot, but there's more to it), is because the AAAAAAAA (0x4141414141414141) is considered a non-canonical memory address, or, in other words, 0x4141414141414141 is a 64-bit wide address and current CPUs prevent applications and OSes to use 64-bit wide addresses. 
 Instead, the highest memory addresses programs can use are 48-bit wide addresses and they are capped to 0x00007FFFFFFFFFFF. This is done to prevent the unnecessary complexity in memory address translations that would not provide much benefit to the OSes or applications as it's very unlikely they would ever need to use all of that 64-bil address space. 
 
-To know exactly at what point we are going to overwrite `RIP` we are going to create a pattern of `700` as before, so we resend it replacing the A's with our pattern.
+To know exactly at what point we are going to overwrite `rip` we are going to create a pattern of `700` as before, so we resend it replacing the A's with our pattern.
 
 ```bash
 gef➤  pattern create 700
@@ -302,7 +302,7 @@ gef➤  pattern offset 0x6361616161616170
 ```
 {: .nolineno }
 
-Ok, `520` is the amount of junk we need to overwrite the stack, so the next 8 bytes are the ones that are going to overwrite `RIP`, knowing this we can start crafting our exploit.
+Ok, `520` is the amount of junk we need to overwrite the stack, so the next 8 bytes are the ones that are going to overwrite `rip`, knowing this we can start crafting our exploit.
 
 We are going to make use of the `pwn` python library, so if you don't have it you must install it with:
 
@@ -310,6 +310,22 @@ We are going to make use of the `pwn` python library, so if you don't have it yo
 $ pip install pwn
 ```
 {: .nolineno }
+
+Before creating an attack strategy, let's check the security of the binary with checksec.
+
+```bash
+$ checksec --file=activate_license
+RELRO           STACK CANARY      NX            PIE             RPATH      RUNPATH      Symbols         FORTIFY Fortified       Fortifiable     FILE
+Full RELRO      No canary found   NX enabled    PIE enabled     No RPATH   No RUNPATH   100 Symbols       No    0               3               activate_license
+```
+{: .nolineno }
+
+We can see that NX is activated. NX stands for "non-executable." It's often enabled at the CPU level, so an operating system with NX enabled can mark certain areas of memory as non-executable. Often, buffer-overflow exploits put code on the stack and then try to execute it. However, making this writable area non-executable can prevent such attacks.
+
+To bypass the active NX, we will execute an attack known as `ret2libc`.
+
+> A ret2libc (return to libc, or return to the C library) attack is one in which the attacker does not require any shellcode to take control of a target, vulnerable process.
+{: .prompt-info }
 
 Before we continue we need a few things to be able to craft our exploit:
 1. binary base address
@@ -385,7 +401,7 @@ Okay, before we start, let's define the attack strategy, which will be as follow
 1. fill stack with junk to gain control of the `rip` (instruction pointer)
 2. find a section in memory where we can write
 3. write our payload in to the writable memory
-4. call the function system indicating as parameter a pointer to the memory section in which we have written our payload
+4. call the system function passing as parameter a pointer to the memory section in which we have written our payload
 
 Step 1 is already complete, we know that we need `520 bytes` of junk and the next `8 bytes` are the ones that will overwrite `rip`.
 
@@ -455,11 +471,11 @@ with open('license.payload', 'wb') as f:
 
 It sounds complicated, but really what you are doing is very simple. We adjust all the gadgets that we have found taking into account what is the base of libc, as well as the section in memory in which we are going to write with respect to the base of the binary.
 
-We create our payload (`line 18`), we start the rop introducing the junk (`520 bytes`) and we make a loop over our payload in fragments of `8 bytes`, for each iteration an address in memory is established in which it will be written, starting from the initial base (`line 23`), this address is stored in `rdi`, the following is to take the 8 bytes corresponding to the payload (and in case of needing it because it does not have 8 bytes long, add nullbytes to fill it), store these bytes in `rdx` (`line 25`). Subsequently, the content of `rdx` is moved to the memory address indicated by `rdi`. At the end of the for loop, what we have achieved is to write the whole string of our payload in memory.
+Lets start by defining our payload (`line 18`) and start the rop chain with the `520 bytes` of junk, we loop over our payload in fragments of `8 bytes`, for each iteration an address in memory is established in which it will be written, starting from the initial base (`line 23`), this address is stored in `rdi`, the following is to take the 8 bytes corresponding to the payload (and in case of needing it because it does not have 8 bytes long, add nullbytes to fill it), store these bytes in `rdx` (`line 25`). Subsequently, the content of `rdx` is moved to the memory address indicated by `rdi`. At the end of the for loop. What we have achieved is to write the whole string of our payload in memory.
 
-For the final phase, all we do is push the address with the start of our payload into `rdi` and call system, which uses `rdi` as the first function parameter.
+For the final phase, all we need to do is push the address pointing at the start of our payload into `rdi` and call system, which uses `rdi` as the first parameter.
 
-We save the final result in a file, and use the functionality of the application that we had seen before to upload our file.
+We save the final result in a file, and use the functionality of `beta.html` to upload our file.
 
 ## Getting user shell
 
