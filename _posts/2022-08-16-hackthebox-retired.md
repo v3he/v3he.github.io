@@ -1,10 +1,13 @@
 ---
 title: HackTheBox - Retired
 date: 2022-08-16 11:00:00 +0800
-categories: [HackTheBox]
-tags: [api]
+categories: [HackTheBox, Medium]
+tags: [buffer-overflow, reverse-engineering, local-file-disclosure, rop-chain]
 img_path: /assets/img/machine/retired/
 ---
+
+Retired machine starts with a `Local File Disclosure` vulnerability in the web page, which we will use to download a binary used to validate a license file, this binary has a buffer overflow vulnerability which will allow us to gain access as www-data when uploading a modified license file. Later we will create a symbolic link to obtain the user's ssh key and be able to obtain a shell as the dev user. Finally we will abuse `binfmt_misc` to run a binary as root to get a shell. As a curiosity we will reverse engineer the license activation binary to see why it is vulnerable.
+
 ## Info
 
 ![Retired Machine Info](retired-machine-card.png)
