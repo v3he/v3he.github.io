@@ -34,7 +34,7 @@ Service Info: OS: Linux; CPE: cpe:/o:linux:linux_kernel
 
 We can see that you have two ports open, running `ssh` and `http`. We can also see that the http port is running using `nginx`.
 
-## Web enumeration
+## Recon
 
 ```bash
 $ curl -i http://10.129.227.96/
@@ -59,6 +59,8 @@ dev:x:1001:1001::/home/dev:/bin/bash
 {: .nolineno }
 
 Great! We have `Local File Disclosure` vulnerability so we can read files from the system, let's launch `feroxbuster` to see what other paths the web has.
+
+### Directory Brute Force
 
 > file extensions to be searched (`-x`)
 {: .prompt-info }
@@ -94,6 +96,8 @@ by Ben "epi" Risher 🤓                 ver: 2.7.0
 {: .nolineno }
 
 Another result apart from the ones we know has been listed, let's see what `beta.html` contains.
+
+### Beta Testing Functionality
 
 ![Beta Page](beta-page.png)
 
@@ -178,7 +182,9 @@ $ ./activate_license 1337
 ```
 {: .nolineno }
 
-The file is a 64-bit binary that we can use to replicate the server's file upload operation. The most common vulnerability is usually a buffer overflow, so let's launch the program in `gdb` to see what it is doing. As we saw in the code of `activate_license.php`, it first sends the length of the file and then sends the content of the file.
+### Debugging activate license binary
+
+The file is a 64-bit binary that we can use to replicate the server's file upload operation. The most common vulnerability is usually a buffer overflow, so let's launch the program in `gdb` to see what it is doing. As we saw in the code of `activate_license.php`, it first sends the length of the file and then the content of the file.
 
 ```bash
 $ gdb -q ./activate_license
@@ -305,6 +311,8 @@ gef➤  pattern offset 0x6361616161616170
 Ok, `520` is the amount of junk we need to overwrite the stack, so the next 8 bytes are the ones that are going to overwrite `rip`, knowing this we can start crafting our exploit.
 
 We are going to make use of the `pwn` python library, so if you don't have it you must install it with:
+
+## Shell as www-data
 
 ```bash
 $ pip install pwn
@@ -477,7 +485,7 @@ For the final phase, all we need to do is push the address pointing at the start
 
 We save the final result in a file, and use the functionality of `beta.html` to upload our file.
 
-## Getting user shell
+## Shell as user
 
 Ok, so now we have a shell as `www-data`, let's do some recon to see how we can scale to a normal user.
 
@@ -518,6 +526,8 @@ WantedBy=multi-user.target
 
 We can see that it is running `/usr/bin/webbackup`, let's see what it is and what it does.
 
+### Analyze webbackup script
+
 ```bash
 www-data@retired:~$ cat /usr/bin/webbackup
 #!/bin/bash
@@ -543,7 +553,9 @@ KEEP=10
 ```
 {: .nolineno }
 
-What this script does is to create a backup of the `/var/www/html folder`, we are going to create a symbolic link to the home folder of the dev user, which we can see that it exists by looking at the `/etc/passwd` file and see if we can list the home directory.
+What this script does is to create a backup of the `/var/www/html` folder, we are going to create a symbolic link to the home folder of the dev user, which we can see that it exists by looking at the `/etc/passwd` file and see if we can list the home directory.
+
+### Dump user ssh key
 
 ```bash
 www-data@retired:~/html$ ls -la
@@ -597,7 +609,7 @@ inflating: var/www/html/home/activate_license/activate_license
 
 The backup has been created correctly, and when extracting it we can see the home directory of the user, now we already have the ssh key, so we download it and login into the machine as the user `dev`.
 
-## Getting root shell
+## Shell as root
 
 Once we login with `ssh`, we see in the user's home a folder called `emuemu`, in the `README.md` there is a description of what it is.
 
@@ -685,6 +697,8 @@ flags
 ```
 {: .nolineno }
 
+### Exploit binfmt_misc register
+
 Therefore, the plan of attack would be as follows:
 - create a binary that when executed returns a shell
 - register a new binary type with a custom extension, so that when a file with that extension is executed, first launch our binary with the shell
@@ -732,9 +746,13 @@ root
 
 To give a little more context about the exploitation we have done on the activate_license binary, let's open it with [ghidra](https://ghidra-sre.org/) to see exactly what it does.
 
+### Activate License binary main function
+
 ![Activate License Main Function](activate-license-main-func.png)
 
 The first question is, why when the application crashes, doesn't the whole service go down? The answer to this is in `line 57`, every time a client connects, a new thread is created, so what it does is to crash the child thread, not the main one.
+
+### Activate License binary activate function
 
 ![Activate License Activate Function](activate-license-activate-license-func.png)
 
