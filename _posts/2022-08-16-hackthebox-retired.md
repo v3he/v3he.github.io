@@ -2,8 +2,8 @@
 title: HackTheBox - Retired
 date: 2022-08-16 11:00:00 +0800
 categories: [HackTheBox, Medium]
-tags: [buffer-overflow, reverse-engineering, local-file-disclosure, rop-chain]
-img_path: /assets/img/machine/retired/
+tags: [buffer-overflow, reverse-engineering, local-file-disclosure, rop-chain, binfmt_misc]
+img_path: /assets/img/machines/retired/
 ---
 
 Retired machine starts with a `Local File Disclosure` vulnerability in the web page, which we will use to download a binary used to validate a license file, this binary has a buffer overflow vulnerability which will allow us to gain access as www-data when uploading a modified license file. Later we will create a symbolic link to obtain the user's ssh key and be able to obtain a shell as the dev user. Finally we will abuse `binfmt_misc` to run a binary as root to get a shell. As a curiosity we will reverse engineer the license activation binary to see why it is vulnerable.
@@ -322,6 +322,8 @@ $ pip install pwn
 ```
 {: .nolineno }
 
+### Check binary security
+
 Before creating an attack strategy, let's check the security of the binary with checksec.
 
 ```bash
@@ -332,6 +334,8 @@ Full RELRO      No canary found   NX enabled    PIE enabled     No RPATH   No RU
 {: .nolineno }
 
 We can see that NX is activated. NX stands for "non-executable." It's often enabled at the CPU level, so an operating system with NX enabled can mark certain areas of memory as non-executable. Often, buffer-overflow exploits put code on the stack and then try to execute it. However, making this writable area non-executable can prevent such attacks.
+
+### Exploit planning
 
 To bypass the active NX, we will execute an attack known as `ret2libc`.
 
@@ -392,6 +396,8 @@ $ objdump -d libc-2.31.so | grep system
 {: .nolineno }
 
 Ok! so now we have everything we need to start crafting our exploit.
+
+### Crafting our exploit
 
 ```python
 from pwn import *
@@ -485,6 +491,10 @@ It sounds complicated, but really what you are doing is very simple. We adjust a
 Lets start by defining our payload (`line 18`) and start the rop chain with the `520 bytes` of junk, we loop over our payload in fragments of `8 bytes`, for each iteration an address in memory is established in which it will be written, starting from the initial base (`line 23`), this address is stored in `rdi`, the following is to take the 8 bytes corresponding to the payload (and in case of needing it because it does not have 8 bytes long, add nullbytes to fill it), store these bytes in `rdx` (`line 25`). Subsequently, the content of `rdx` is moved to the memory address indicated by `rdi`. At the end of the for loop. What we have achieved is to write the whole string of our payload in memory.
 
 For the final phase, all we need to do is push the address pointing at the start of our payload into `rdi` and call system, which uses `rdi` as the first parameter.
+
+I have drawn a very basic representation of what is happening for better understanding (Note: 0x4016 is incorrect, the address should be 0x4010).
+
+![Stack Flow](stack-flow.gif)
 
 We save the final result in a file, and use the functionality of `beta.html` to upload our file.
 
