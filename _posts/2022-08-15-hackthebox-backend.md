@@ -3,14 +3,16 @@ title: HackTheBox - Backend
 date: 2022-08-15 21:00:00 +0800
 categories: [HackTheBox, Medium]
 tags: [api, uvicorn]
+pin: true
 img_path: /assets/img/machines/backend/
+image:
+  path: backend-machine-card.png
+  alt: HackTheBox machine information card.
 ---
-
-Backend is a machine that focuses on exploiting an `API`, the goal is to enumerate to find the swagger documentation, then gain access as admin to later modify the token to activate a debug flag to be able to call an endpoint that allows us to execute commands. Through this endpoint we obtain a shell to later escalate to root. The escalation is simple, in one of the access logs we can see the password of the root user which seems to be that he put unintentionally instead of the user name.
 
 ## Info
 
-![Backend Machine Info](backend-machine-card.png)
+Backend is a machine that focuses on exploiting an `API`, the goal is to enumerate to find the swagger documentation, then gain access as admin to later modify the token to activate a debug flag to be able to call an endpoint that allows us to execute commands. Through this endpoint we obtain a shell to later escalate to root. The escalation is simple, in one of the access logs we can see the password of the root user which seems to be that he put unintentionally instead of the user name.
 
 ## Port Scan
 
