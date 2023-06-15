@@ -1,18 +1,20 @@
 #  The contact options.
 
 - type: github
-  icon: "fab fa-github"
-
-- type: twitter
-  icon: "fab fa-twitter"
+  icon: 'fab fa-github'
 
 - type: email
-  icon: "fas fa-envelope"
-  noblank: true # open link in current tab
+  icon: 'fas fa-envelope'
+  noblank: true
+
+- type: linkedin
+  icon: 'fab fa-linkedin'
+  url:  'https://www.linkedin.com/in/pablo-chueca-taus/'
 
 - type: rss
-  icon: "fas fa-rss"
+  icon: 'fas fa-rss'
   noblank: true
+
 # Uncomment and complete the url below to enable more contact options
 #
 # - type: mastodon
