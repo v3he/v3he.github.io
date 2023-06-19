@@ -10,9 +10,9 @@ image:
 
 ## Info
 
-| Name   | Difficulty | Author                                          |
-|--------|------------|:------------------------------------------------|
-| Museum | Medium     | [JohnHammond](https://twitter.com/_johnhammond) |
+| Name                                                                   | Difficulty | Author                                          |
+|------------------------------------------------------------------------|------------|:------------------------------------------------|
+| [Museum](https://github.com/v3he/ctfs/tree/master/nahamcon2023/museum) | Medium     | [JohnHammond](https://twitter.com/_johnhammond) |
 
 > Check out our museum of artifacts! Apparently, soon they will allow public submissions, just like in Animal Crossing! Retrive the flag out of `/flag.txt` in the root of the file system. 
 {: .prompt-info }
