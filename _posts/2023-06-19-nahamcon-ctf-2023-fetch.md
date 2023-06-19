@@ -2,7 +2,7 @@
 title: NahamCon CTF 2023 - Fetch
 date: 2023-06-19 09:00:00 +0800
 categories: [NahamCon CTF 2023, Forensics]
-tags: []
+tags: [wim, pecmd, forensics]
 img_path: /assets/img/ctfs/nahamcon2023/fetch/
 image:
   path: fetch.jpg
