@@ -3,7 +3,6 @@ title: HackTheBox - Backend
 date: 2022-08-15 21:00:00 +0800
 categories: [HackTheBox, Medium]
 tags: [api, uvicorn]
-pin: true
 img_path: /assets/img/machines/backend/
 image:
   path: backend-machine-card.png
