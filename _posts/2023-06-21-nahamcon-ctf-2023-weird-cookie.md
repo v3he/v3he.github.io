@@ -190,3 +190,135 @@ I'm going to give you a little sneak peak of what we'll see later when we debug 
 
 ![First Input Stack](first-input-stack.png)
 
+### Second Input
+
+```bash
+lea     rax, [rbp+s]                 # [rbp+s] is the buffer where our input is going to be stored
+mov     edx, 28h ; '('  ; n
+mov     esi, 0          ; c
+mov     rdi, rax        ; s
+call    _memset                      # clears the first 40 characters of our buffer
+lea     rdi, aAreYouSureYouO ; "Are you sure you overflowed it right? T"...
+call    _puts                        # prints the string above to the user
+lea     rax, [rbp+s]                 # [rbp+s] is the buffer where our input is going to be stored
+mov     edx, 40h ; '@'  ; nbytes
+mov     rsi, rax        ; buf
+mov     edi, 0          ; fd
+call    _read                        # stores 64 bytes of our input into the buffer
+```
+{: .nolineno }
+
+Once again, it clears the first `40 bytes` of the buffer, displays a message to the user, and copies the first `64 bytes` of the input back into the buffer again.
+
+### Canary Validation
+
+![Canary Check](canary-check.png)
+
+The integrity of the canary, saved in both `[rbp+var_8]` and `saved_canary` is checked by doing a `cmp`. In case the check failed, it displays the `Nope :(` message and exits. In case the check is successful it continues along the right path and reaches the `ret` instruction to continue with the normal exit of the program.
+
+## Debugging
+
+In the same way that in the disassembly, I am going to go part by part showing how each fragment of the program is seen from the debug mode, to see how data is saved in the memory. I'm going to use `IDA's own debugger`, but you can use `gdb` if you feel more comfortable.
+
+### Canary Creation
+
+```bash
+mov     rax, cs:printf_ptr
+mov     rdx, rax
+mov     rax, 123456789ABCDEF1h
+xor     rax, rdx
+mov     [rbp+var_8], rax
+mov     rax, [rbp+var_8]
+mov     cs:saved_canary, rax
+lea     rax, [rbp+s]                # <-- set a breakpoint here
+```
+{: .nolineno }
+
+Let's set a `breakpoint` just after the creation of the canary to see where it is being saved and how the stack looks like at that moment.
+
+![Canary Breakpoint](canary-bp.png)
+![Canary Breakpoint Stack](canary-bp-stack.png)
+
+### First Input
+
+```bash
+lea     rax, [rbp+s]
+mov     edx, 28h ; '('  ; n
+mov     esi, 0          ; c
+mov     rdi, rax        ; s
+call    _memset
+lea     rdi, s          ; "Do you think you can overflow me?"
+call    _puts
+lea     rax, [rbp+s]
+mov     edx, 40h ; '@'  ; nbytes
+mov     rsi, rax        ; buf
+mov     edi, 0          ; fd
+call    _read
+lea     rax, [rbp+s]
+mov     rdi, rax        ; s
+call    _puts
+lea     rax, [rbp+s]                 # <-- set a breakpoint here
+```
+{: .nolineno }
+
+Let's put another breakpoint just after our input is displayed on the screen. This time I will send only 20 characters.
+
+![First Input Breakpoint](first-input-bp.png)
+![First Input Breakpoint Stack](first-input-bp-stack.png)
+
+Several interesting things can be seen in the image of the current stack, let's go one by one:
+
+- at the end of our input we can see that a `line break` `\n` has also been added, so that we are not only sending `20` characters, but `21`, we need to take that in count.
+- the input buffer is in a contiguous memory area than the canary, and remember that as we said when disassembling, we can write `64 bytes`, SO WE CAN OVERWRITE THE CANARY!
+
+Another thing to keep in mind is that the application returns the same input that we have given it using the `puts` function. Given the address of the buffer, puts displays the contents until it encounters a null terminator `\0` (`00` in the hex view) which means that the string has finished.
+
+So if in our case we fill the entire buffer just up to where the canary starts (40 bytes), the null terminator will not exist, so we can see an anomalous operation in the expected execution. Let me show you what I am trying to say, let's run the program again sending `39 characters`, not `40`, because when we press enter we send the line break which counts as a character.
+
+```bash
+$ ./weird_cookie_patched
+Do you think you can overflow me?
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+����1)4���*V
+Are you sure you overflowed it right? Try again.
+haha
+```
+{: .nolineno }
+
+What are those weird characters? It's a memory leak! We have extracted continuous memory from the buffer until the next null terminator, in this case it is:
+
+- value of the canary
+- `__libc_csu_init` 
+- `__libc_start_main` from `libc_2.27.so`
+
+I will explain more in the exploitation section, for now just keep in mind that we can leak the memory contiguous to the input.
+
+### Second Input
+
+There is not much to see here, basically it is like the first input, it saves 64 bytes in the input buffer.
+We continue where we stopped at the previous breakpoint and put 20 "A" again in the second input request.
+
+### Canary Validation
+
+```bash
+mov     rax, cs:saved_canary
+cmp     [rbp+var_8], rax            # <-- set a breakpoint here
+jz      short loc_55B0597B227F
+
+loc_55B0597B227F:
+    mov     eax, 0
+    leave
+    retn                            # <-- set a breakpoint here
+```
+{: .nolineno }
+
+We are going to put a breakpoint just at the moment of doing the canary check and just before the program ends, in the `ret` instruction.
+
+![Canary Validation Registers](cmp-reg.png)
+![Canary Validation Stack](cmp-stack.png)
+
+Since with `20 characters` we do not overwrite the canary, the comparison is done correctly, since both the stored canary (`rax`) and the canary buffer (`[rbp+var_8]`) have the same value.
+
+Let's continue to the ret breakpoint.
+
