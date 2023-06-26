@@ -151,7 +151,7 @@ It is not very long, but let's go little by little, I will put comments along th
 mov     rax, cs:printf_ptr          # address of printf
 mov     rdx, rax
 mov     rax, 123456789ABCDEF1h      # hardcoded value
-xor     rax, rdx                    # xor the harcoded value with the address of prinft
+xor     rax, rdx                    # xor the hardcoded value with the address of printf
 mov     [rbp+var_8], rax            # save the result in a variable
 mov     rax, [rbp+var_8]
 mov     cs:saved_canary, rax        # save the result in saved_canary
